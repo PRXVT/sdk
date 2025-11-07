@@ -1,0 +1,58 @@
+# Dependencies
+node_modules/
+package-lock.json
+yarn.lock
+
+# Build outputs
+dist/
+out/
+cache/
+build/eligibility_js/
+build/*.r1cs
+build/*.sym
+build/*.wasm
+build/*.zkey
+build/*.ptau
+
+# TypeScript
+*.tsbuildinfo
+
+# Foundry
+lib/
+broadcast/
+deployments/
+
+# Environment variables & secrets
+.env
+.env.local
+*.key
+*.secret
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Test coverage
+coverage/
+.nyc_output/
+
+# Circom
+*.sym
+
+# Keep these build artifacts for production
+!build/verification_key.json
+!build/eligibility_final.zkey
+nul
