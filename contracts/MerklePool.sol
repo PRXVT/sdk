@@ -3,6 +3,7 @@ pragma solidity ^0.8.20;
 
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
+import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import "../lib/poseidon-solidity/contracts/PoseidonT3.sol";
 import "../lib/poseidon-solidity/contracts/PoseidonT4.sol";
 
@@ -11,7 +12,7 @@ import "../lib/poseidon-solidity/contracts/PoseidonT4.sol";
  * @notice Pool contract for zk-private X402 payments with UTXO model
  * @dev Stores Merkle commitments using proper binary Merkle tree, manages root buffer
  */
-contract MerklePool is Ownable {
+contract MerklePool is Ownable, ReentrancyGuard {
     IERC20 public immutable usdc;
 
     // Merkle tree parameters
@@ -28,6 +29,8 @@ contract MerklePool is Ownable {
 
     mapping(bytes32 => bool) public nullifiers; // Double-spend prevention
     mapping(bytes32 => bool) public commitments; // Track all commitments
+    mapping(bytes32 => bool) public validRoots; // Gas-efficient root validation
+    mapping(uint256 => bool) public validDenoms; // Gas-efficient denomination check
 
     address public paymaster;
     address public treasury;
@@ -52,8 +55,14 @@ contract MerklePool is Ownable {
     error OnlyPaymaster();
     error NullifierUsed();
     error FeeTooHigh();
+    error ZeroAddress();
+    error InvalidAmount();
 
     constructor(address _usdc, address _paymaster, address _treasury) Ownable(msg.sender) {
+        if (_usdc == address(0) || _paymaster == address(0) || _treasury == address(0)) {
+            revert ZeroAddress();
+        }
+
         usdc = IERC20(_usdc);
         paymaster = _paymaster;
         treasury = _treasury;
@@ -65,6 +74,12 @@ contract MerklePool is Ownable {
         DENOMS[2] = 1000000;   // 1.00 USDC
         DENOMS[3] = 5000000;   // 5.00 USDC
 
+        // Initialize denomination mapping for O(1) lookup
+        validDenoms[100000] = true;
+        validDenoms[500000] = true;
+        validDenoms[1000000] = true;
+        validDenoms[5000000] = true;
+
         // Initialize Merkle tree zero hashes
         // zeros[0] = keccak256(abi.encodePacked(bytes32(0)))
         zeros[0] = bytes32(0);
@@ -73,7 +88,9 @@ contract MerklePool is Ownable {
         }
 
         // Initialize root with empty tree root
-        rootHistory[0] = zeros[TREE_DEPTH - 1];
+        bytes32 initialRoot = zeros[TREE_DEPTH - 1];
+        rootHistory[0] = initialRoot;
+        validRoots[initialRoot] = true;
     }
 
     /**
@@ -81,9 +98,10 @@ contract MerklePool is Ownable {
      * @param commitment Poseidon(secret, nullifier, denomination)
      * @param denomination Must be one of the fixed denominations
      */
-    function deposit(bytes32 commitment, uint256 denomination) external {
+    function deposit(bytes32 commitment, uint256 denomination) external nonReentrant {
         if (!_isValidDenom(denomination)) revert InvalidDenomination();
         if (commitments[commitment]) revert CommitmentExists();
+        if (denomination == 0) revert InvalidAmount();
 
         // Transfer USDC from user
         uint256 fee = (denomination * feeBps) / 10000;
@@ -100,9 +118,17 @@ contract MerklePool is Ownable {
         // Update Merkle tree with new leaf
         bytes32 newRoot = _insert(commitment);
 
+        // Invalidate oldest root if buffer is full
+        uint256 oldRootIndex = (currentRootIndex + 1) % 10;
+        bytes32 oldRoot = rootHistory[oldRootIndex];
+        if (oldRoot != bytes32(0)) {
+            validRoots[oldRoot] = false;
+        }
+
         // Store new root in buffer
-        currentRootIndex = (currentRootIndex + 1) % 10;
+        currentRootIndex = oldRootIndex;
         rootHistory[currentRootIndex] = newRoot;
+        validRoots[newRoot] = true;
 
         emit Deposit(commitment, denomination, nextLeafIndex);
         emit RootUpdated(newRoot, currentRootIndex);
@@ -124,10 +150,11 @@ contract MerklePool is Ownable {
         uint256 paymentAmount,
         bytes32 changeCommitment,
         uint256 changeAmount
-    ) external {
+    ) external nonReentrant {
         if (msg.sender != paymaster) revert OnlyPaymaster();
         if (nullifiers[nullifierHash]) revert NullifierUsed();
-        // No denomination check - users can pay any amount from their notes
+        if (merchant == address(0)) revert ZeroAddress();
+        if (paymentAmount == 0) revert InvalidAmount();
 
         // Burn nullifier (mark as spent)
         nullifiers[nullifierHash] = true;
@@ -140,9 +167,17 @@ contract MerklePool is Ownable {
             // Update Merkle tree with change commitment
             bytes32 newRoot = _insert(changeCommitment);
 
+            // Invalidate oldest root if buffer is full
+            uint256 oldRootIndex = (currentRootIndex + 1) % 10;
+            bytes32 oldRoot = rootHistory[oldRootIndex];
+            if (oldRoot != bytes32(0)) {
+                validRoots[oldRoot] = false;
+            }
+
             // Store new root in buffer
-            currentRootIndex = (currentRootIndex + 1) % 10;
+            currentRootIndex = oldRootIndex;
             rootHistory[currentRootIndex] = newRoot;
+            validRoots[newRoot] = true;
 
             emit RootUpdated(newRoot, currentRootIndex);
             nextLeafIndex++;
@@ -155,15 +190,12 @@ contract MerklePool is Ownable {
     }
 
     /**
-     * @notice Check if root is in buffer (last 10 roots valid)
+     * @notice Check if root is valid (O(1) lookup using mapping)
      * @param root Root to check
-     * @return isValid True if root is in buffer
+     * @return isValid True if root is valid
      */
     function isValidRoot(bytes32 root) public view returns (bool isValid) {
-        for (uint256 i = 0; i < 10; i++) {
-            if (rootHistory[i] == root) return true;
-        }
-        return false;
+        return validRoots[root];
     }
 
     /**
@@ -188,6 +220,7 @@ contract MerklePool is Ownable {
      * @notice Set paymaster address
      */
     function setPaymaster(address _paymaster) external onlyOwner {
+        if (_paymaster == address(0)) revert ZeroAddress();
         paymaster = _paymaster;
     }
 
@@ -195,14 +228,16 @@ contract MerklePool is Ownable {
      * @notice Set treasury address
      */
     function setTreasury(address _treasury) external onlyOwner {
+        if (_treasury == address(0)) revert ZeroAddress();
         treasury = _treasury;
     }
 
     /**
-     * @notice Fund paymaster with ETH for gas
+     * @notice Fund paymaster with ETH for gas (using call for forward compatibility)
      */
     function fundPaymaster() external payable onlyOwner {
-        payable(paymaster).transfer(msg.value);
+        (bool success, ) = paymaster.call{value: msg.value}("");
+        require(success, "ETH transfer failed");
     }
 
     /**
@@ -221,11 +256,13 @@ contract MerklePool is Ownable {
 
     // ========== INTERNAL ==========
 
+    /**
+     * @notice Check if denomination is valid (O(1) lookup using mapping)
+     * @param amount Amount to check
+     * @return True if valid denomination
+     */
     function _isValidDenom(uint256 amount) internal view returns (bool) {
-        for (uint256 i = 0; i < DENOMS.length; i++) {
-            if (DENOMS[i] == amount) return true;
-        }
-        return false;
+        return validDenoms[amount];
     }
 
     /**

@@ -14,16 +14,21 @@ contract ZKPaymaster is BasePaymaster {
     address public verifier; // Groth16 verifier contract
 
     event PaymentSponsored(address indexed merchant, uint256 amount, bytes32 nullifierHash);
+    event VerifierUpdated(address indexed oldVerifier, address indexed newVerifier);
 
     error InvalidProofData();
     error InvalidProof();
     error InvalidRoot();
+    error ZeroAddress();
 
     constructor(
         IEntryPoint _entryPoint,
         address _verifier,
         MerklePool _pool
     ) BasePaymaster(_entryPoint) Ownable(msg.sender) {
+        if (_verifier == address(0) || address(_pool) == address(0)) {
+            revert ZeroAddress();
+        }
         verifier = _verifier;
         pool = _pool;
     }
@@ -62,6 +67,16 @@ contract ZKPaymaster is BasePaymaster {
             bytes32 changeCommitment,
             uint256 changeAmount
         ) = abi.decode(paymasterData, (uint256[8], uint256[5], address, uint256, bytes32, uint256));
+
+        // Validate merchant address
+        if (merchant == address(0)) {
+            return ("", 1); // SIG_VALIDATION_FAILED
+        }
+
+        // Validate payment amount
+        if (paymentAmount == 0) {
+            return ("", 1); // SIG_VALIDATION_FAILED
+        }
 
         // Extract values from public signals (circom order: outputs first, then public inputs)
         bytes32 proofChangeCommitment = bytes32(publicSignals[0]);
@@ -148,7 +163,10 @@ contract ZKPaymaster is BasePaymaster {
      * @notice Update verifier contract
      */
     function setVerifier(address _verifier) external onlyOwner {
+        if (_verifier == address(0)) revert ZeroAddress();
+        address oldVerifier = verifier;
         verifier = _verifier;
+        emit VerifierUpdated(oldVerifier, _verifier);
     }
 
     /**

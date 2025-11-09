@@ -86,14 +86,42 @@ template EligibilityProof(nLevels) {
     changePositive.in[1] <== 0;
     changePositive.out === 1;
 
-    // 5. Compute change commitment: Poseidon(newSecret, newNullifier, changeAmount)
+    // 5. Ensure paymentAmount > 0 (no zero payments)
+    component paymentPositive = GreaterThan(64);
+    paymentPositive.in[0] <== paymentAmount;
+    paymentPositive.in[1] <== 0;
+    paymentPositive.out === 1;
+
+    // 6. Ensure denomination > 0 (valid note)
+    component denomPositive = GreaterThan(64);
+    denomPositive.in[0] <== denomination;
+    denomPositive.in[1] <== 0;
+    denomPositive.out === 1;
+
+    // 7. Range check: ensure amounts fit in 64 bits (prevent overflow)
+    component paymentRange = LessThan(64);
+    paymentRange.in[0] <== paymentAmount;
+    paymentRange.in[1] <== 18446744073709551616; // 2^64
+    paymentRange.out === 1;
+
+    component changeRange = LessThan(64);
+    changeRange.in[0] <== changeAmount;
+    changeRange.in[1] <== 18446744073709551616; // 2^64
+    changeRange.out === 1;
+
+    component denomRange = LessThan(64);
+    denomRange.in[0] <== denomination;
+    denomRange.in[1] <== 18446744073709551616; // 2^64
+    denomRange.out === 1;
+
+    // 8. Compute change commitment: Poseidon(newSecret, newNullifier, changeAmount)
     component changeComm = Poseidon(3);
     changeComm.inputs[0] <== newSecret;
     changeComm.inputs[1] <== newNullifier;
     changeComm.inputs[2] <== changeAmount;
     changeCommitment <== changeComm.out;
 
-    // 6. Hash nullifier to prevent linkability (double-spend protection)
+    // 9. Hash nullifier to prevent linkability (double-spend protection)
     component nullHash = Poseidon(1);
     nullHash.inputs[0] <== nullifier;
     nullifierHash <== nullHash.out;
