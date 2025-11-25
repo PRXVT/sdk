@@ -16,7 +16,7 @@
 ## Installation
 
 ```bash
-npm install @prxvt/sdk viem
+npm install @prxvt/sdk
 ```
 
 ## Quick Start
