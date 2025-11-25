@@ -1,7 +1,7 @@
 {
-  "name": "@prxvt/privacy-sdk",
+  "name": "@prxvt/sdk",
   "version": "1.0.0",
-  "description": "Privacy-preserving SDK for x402 payments using zero-knowledge proofs. Pay for APIs privately without revealing your identity.",
+  "description": "px402 - Private x402 payments using zero-knowledge proofs. Pay for APIs privately without revealing your identity.",
   "main": "dist/index.js",
   "module": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -24,6 +24,7 @@
   },
   "keywords": [
     "privacy",
+    "px402",
     "x402",
     "zero-knowledge",
     "payments",
@@ -50,10 +51,10 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/prxvt/privacy-sdk"
+    "url": "https://github.com/prxvt/sdk"
   },
   "bugs": {
-    "url": "https://github.com/prxvt/privacy-sdk/issues"
+    "url": "https://github.com/prxvt/sdk/issues"
   },
-  "homepage": "https://github.com/prxvt/privacy-sdk#readme"
+  "homepage": "https://github.com/prxvt/sdk#readme"
 }

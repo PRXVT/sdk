@@ -1,5 +1,5 @@
 /**
- * Privacy SDK - Private x402 Payments
+ * px402 SDK - Private x402 Payments
  *
  * @example
  * ```typescript
@@ -9,7 +9,7 @@
  *   decryptNote,
  *   decodeXPaymentResponse,
  *   getNoteBalance
- * } from '@prxvt/privacy-sdk';
+ * } from '@prxvt/sdk';
  *
  * // Initialize SDK
  * const sdk = new PrivacySDK({ chain: 'base' });

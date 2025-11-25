@@ -1,16 +1,14 @@
-# @prxvt/privacy-sdk
+# @prxvt/sdk
 
-Privacy-preserving SDK for making x402 payments using zero-knowledge proofs. Pay for APIs privately without revealing your identity or transaction history.
+**px402** - Private x402 payments using zero-knowledge proofs. Pay privately without revealing your identity or transaction history.
 
-[![npm version](https://badge.fury.io/js/@prxvt%2Fprivacy-sdk.svg)](https://www.npmjs.com/package/@prxvt/privacy-sdk)
+[![npm version](https://badge.fury.io/js/@prxvt%2Fsdk.svg)](https://www.npmjs.com/package/@prxvt/sdk)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 ## Features
 
-- **Zero Gas Fees**: Users never pay gas (paymaster sponsors all transactions)
 - **Full Privacy**: Each payment uses a fresh burner wallet, unlinkable to previous payments
 - **x402 Compatible**: Works seamlessly with any x402-enabled API
-- **Note-Based**: UTXO model - notes are automatically updated after each payment
 - **Cross-Chain**: Deposit on one chain, spend on another (Base <-> Polygon)
 - **ZK Proofs**: All transactions validated with Groth16 zero-knowledge proofs
 - **Note Encryption**: AES-256-GCM encryption for secure note storage
@@ -18,7 +16,7 @@ Privacy-preserving SDK for making x402 payments using zero-knowledge proofs. Pay
 ## Installation
 
 ```bash
-npm install @prxvt/privacy-sdk viem
+npm install @prxvt/sdk viem
 ```
 
 ## Quick Start
@@ -26,7 +24,7 @@ npm install @prxvt/privacy-sdk viem
 ### 1. Initialize SDK
 
 ```typescript
-import { PrivacySDK } from '@prxvt/privacy-sdk';
+import { PrivacySDK } from '@prxvt/sdk';
 
 const sdk = new PrivacySDK({
   chain: 'base', // or 'polygon'
@@ -43,7 +41,7 @@ const note = await sdk.deposit(10, '0xYourPrivateKey');
 console.log('Note created:', JSON.stringify(note));
 ```
 
-### 3. Make Private x402 Payments
+### 3. Make Private px402 Payments
 
 ```typescript
 // Load your note
@@ -52,7 +50,7 @@ sdk.setNote(note);
 // Wrap fetch with privacy
 const privateFetch = sdk.wrapFetch(fetch);
 
-// Make x402 payment - COMPLETELY PRIVATE!
+// Make px402 payment - COMPLETELY PRIVATE!
 const response = await privateFetch('https://api.example.com/x402/endpoint', {
   method: 'POST',
   body: JSON.stringify({ message: 'Hello!' }),
@@ -65,7 +63,7 @@ const updatedNote = sdk.getUpdatedNote();
 ### 4. Encrypt Notes for Storage
 
 ```typescript
-import { encryptNote, decryptNote } from '@prxvt/privacy-sdk';
+import { encryptNote, decryptNote } from '@prxvt/sdk';
 
 // Encrypt note with password
 const encrypted = await encryptNote(note, 'my-secret-password');
@@ -84,7 +82,7 @@ import {
   decryptNote,
   getNoteBalance,
   logger
-} from '@prxvt/privacy-sdk';
+} from '@prxvt/sdk';
 
 async function main() {
   // Enable debug logging (optional)
@@ -286,7 +284,7 @@ getChainEid('polygon'); // 30109
 Configure logging level.
 
 ```typescript
-import { logger } from '@prxvt/privacy-sdk';
+import { logger } from '@prxvt/sdk';
 
 logger.setLevel('debug'); // 'none' | 'error' | 'warn' | 'info' | 'debug'
 ```
@@ -306,7 +304,7 @@ import {
   PaymentRequiredError,
   TransactionError,
   NullifierSpentError,
-} from '@prxvt/privacy-sdk';
+} from '@prxvt/sdk';
 ```
 
 ## Types
@@ -392,7 +390,7 @@ For browser environments, load Poseidon hash and snarkjs:
 <script src="https://cdn.prxvt.io/poseidon-browser.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/snarkjs@0.7.0/build/snarkjs.min.js"></script>
 <script type="module">
-  import { PrivacySDK } from '@prxvt/privacy-sdk';
+  import { PrivacySDK } from '@prxvt/sdk';
 
   const sdk = new PrivacySDK({ chain: 'base' });
   // ... use SDK
@@ -408,7 +406,7 @@ npm install circomlibjs snarkjs
 ```
 
 ```typescript
-import { PrivacySDK } from '@prxvt/privacy-sdk';
+import { PrivacySDK } from '@prxvt/sdk';
 import { buildPoseidon } from 'circomlibjs';
 import * as snarkjs from 'snarkjs';
 
@@ -465,6 +463,6 @@ MIT
 
 ## Links
 
-- **GitHub**: [github.com/prxvt/privacy-sdk](https://github.com/prxvt/privacy-sdk)
-- **npm**: [npmjs.com/package/@prxvt/privacy-sdk](https://www.npmjs.com/package/@prxvt/privacy-sdk)
-- **Issues**: [Report bugs](https://github.com/prxvt/privacy-sdk/issues)
+- **GitHub**: [github.com/prxvt/sdk](https://github.com/prxvt/sdk)
+- **npm**: [npmjs.com/package/@prxvt/sdk](https://www.npmjs.com/package/@prxvt/sdk)
+- **Issues**: [Report bugs](https://github.com/prxvt/sdk/issues)
