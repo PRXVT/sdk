@@ -135,9 +135,6 @@ new PrivacySDK(config: PrivacySDKConfig)
 | `bundlerUrl` | `string` | prxvt proxy | Custom bundler URL |
 | `bundlerApiKey` | `string` | - | Pimlico API key (optional) |
 | `rpcUrl` | `string` | public RPC | Custom RPC URL |
-| `attestorUrl` | `string` | - | Cross-chain attestor URL |
-| `circuitWasmPath` | `string` | CDN | Path to circuit WASM |
-| `circuitZkeyPath` | `string` | CDN | Path to circuit zkey |
 
 #### Methods
 
