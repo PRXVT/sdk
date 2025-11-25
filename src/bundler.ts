@@ -1,274 +1,247 @@
+// @ts-nocheck
 /**
- * Bundler integration for submitting UserOps with ZK proofs
- * Supports Stackup, Pimlico, and any ERC-4337 bundler
+ * Bundler utilities for ERC-4337 UserOperations
  */
 
-import { ethers, JsonRpcProvider, AbiCoder } from 'ethers';
-
-export interface UserOpParams {
-  sender: string;              // Account address (can be deterministic for first tx)
-  nonce: bigint;
-  initCode: string;            // '0x' if account already deployed
-  callData: string;            // Empty for paymaster-only tx
-  callGasLimit: bigint;
-  verificationGasLimit: bigint;
-  preVerificationGas: bigint;
-  maxFeePerGas: bigint;
-  maxPriorityFeePerGas: bigint;
-  paymasterAndData: string;    // Contains proof + merchant + amounts
-  signature: string;            // '0x' if using paymaster
-}
-
-export interface ProofData {
-  proof: any;
-  publicSignals: string[];
-  merchant: string;
-  paymentAmount: bigint;
-  changeCommitment: bigint;
-  changeAmount: bigint;
-}
+import type { Hex } from 'viem';
+import { encodeAbiParameters, parseAbiParameters } from 'viem';
+import type { ChainConfig, UserOperation, ZKProof } from './types';
+import { logger } from './logger';
 
 /**
- * Bundler client for submitting UserOps
- */
-export class BundlerClient {
-  private provider: JsonRpcProvider;
-  private bundlerUrl: string;
-  private entryPoint: string;
-
-  constructor(bundlerUrl: string, rpcUrl: string, entryPoint: string) {
-    this.bundlerUrl = bundlerUrl;
-    this.provider = new JsonRpcProvider(rpcUrl);
-    this.entryPoint = entryPoint;
-  }
-
-  /**
-   * Submit UserOp to bundler
-   */
-  async submitUserOp(userOp: UserOpParams): Promise<string> {
-    // Format UserOp for bundler (convert BigInts to hex strings)
-    const formattedOp = {
-      sender: userOp.sender,
-      nonce: '0x' + userOp.nonce.toString(16),
-      initCode: userOp.initCode,
-      callData: userOp.callData,
-      callGasLimit: '0x' + userOp.callGasLimit.toString(16),
-      verificationGasLimit: '0x' + userOp.verificationGasLimit.toString(16),
-      preVerificationGas: '0x' + userOp.preVerificationGas.toString(16),
-      maxFeePerGas: '0x' + userOp.maxFeePerGas.toString(16),
-      maxPriorityFeePerGas: '0x' + userOp.maxPriorityFeePerGas.toString(16),
-      paymasterAndData: userOp.paymasterAndData,
-      signature: userOp.signature
-    };
-
-    console.log('\nSubmitting UserOp to bundler...');
-    console.log('  Bundler:', this.bundlerUrl);
-    console.log('  Sender:', formattedOp.sender);
-    console.log('  Paymaster:', userOp.paymasterAndData.slice(0, 42));
-
-    try {
-      // Call eth_sendUserOperation
-      const response = await fetch(this.bundlerUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          jsonrpc: '2.0',
-          id: 1,
-          method: 'eth_sendUserOperation',
-          params: [formattedOp, this.entryPoint]
-        })
-      });
-
-      const result: any = await response.json();
-
-      if (result.error) {
-        throw new Error(`Bundler error: ${result.error.message}`);
-      }
-
-      const userOpHash = result.result;
-      console.log('  ✓ UserOp submitted');
-      console.log('  UserOp hash:', userOpHash);
-
-      return userOpHash;
-    } catch (error: any) {
-      console.error('  ✗ Bundler submission failed:', error.message);
-      throw error;
-    }
-  }
-
-  /**
-   * Wait for UserOp to be included in a block
-   */
-  async waitForUserOp(userOpHash: string, timeout = 60000): Promise<{
-    success: boolean;
-    txHash?: string;
-    blockNumber?: number;
-  }> {
-    console.log('\nWaiting for UserOp confirmation...');
-    const startTime = Date.now();
-
-    while (Date.now() - startTime < timeout) {
-      try {
-        const response = await fetch(this.bundlerUrl, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            jsonrpc: '2.0',
-            id: 1,
-            method: 'eth_getUserOperationReceipt',
-            params: [userOpHash]
-          })
-        });
-
-        const result: any = await response.json();
-
-        if (result.result) {
-          const receipt = result.result;
-          console.log('  ✓ UserOp confirmed!');
-          console.log('  Tx hash:', receipt.receipt.transactionHash);
-          console.log('  Block:', receipt.receipt.blockNumber);
-          console.log('  Success:', receipt.success);
-
-          return {
-            success: receipt.success,
-            txHash: receipt.receipt.transactionHash,
-            blockNumber: parseInt(receipt.receipt.blockNumber, 16)
-          };
-        }
-      } catch (error) {
-        // Receipt not available yet, continue waiting
-      }
-
-      // Wait 2 seconds before polling again
-      await new Promise(resolve => setTimeout(resolve, 2000));
-    }
-
-    throw new Error('UserOp confirmation timeout');
-  }
-
-  /**
-   * Estimate gas for UserOp
-   */
-  async estimateUserOpGas(userOp: UserOpParams): Promise<{
-    callGasLimit: bigint;
-    verificationGasLimit: bigint;
-    preVerificationGas: bigint;
-  }> {
-    const formattedOp = {
-      sender: userOp.sender,
-      nonce: '0x' + userOp.nonce.toString(16),
-      initCode: userOp.initCode,
-      callData: userOp.callData,
-      paymasterAndData: userOp.paymasterAndData,
-      signature: userOp.signature,
-      maxFeePerGas: '0x' + userOp.maxFeePerGas.toString(16),
-      maxPriorityFeePerGas: '0x' + userOp.maxPriorityFeePerGas.toString(16)
-    };
-
-    try {
-      const response = await fetch(this.bundlerUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          jsonrpc: '2.0',
-          id: 1,
-          method: 'eth_estimateUserOperationGas',
-          params: [formattedOp, this.entryPoint]
-        })
-      });
-
-      const result: any = await response.json();
-
-      if (result.error) {
-        console.warn('Gas estimation failed, using defaults');
-        return {
-          callGasLimit: BigInt(100000),
-          verificationGasLimit: BigInt(300000),
-          preVerificationGas: BigInt(50000)
-        };
-      }
-
-      return {
-        callGasLimit: BigInt(result.result.callGasLimit),
-        verificationGasLimit: BigInt(result.result.verificationGasLimit),
-        preVerificationGas: BigInt(result.result.preVerificationGas)
-      };
-    } catch (error) {
-      console.warn('Gas estimation error, using defaults');
-      return {
-        callGasLimit: BigInt(100000),
-        verificationGasLimit: BigInt(300000),
-        preVerificationGas: BigInt(50000)
-      };
-    }
-  }
-
-  /**
-   * Get current gas prices
-   */
-  async getGasPrices(): Promise<{
-    maxFeePerGas: bigint;
-    maxPriorityFeePerGas: bigint;
-  }> {
-    const feeData = await this.provider.getFeeData();
-
-    return {
-      maxFeePerGas: feeData.maxFeePerGas || BigInt(1000000000), // 1 gwei default
-      maxPriorityFeePerGas: feeData.maxPriorityFeePerGas || BigInt(1000000000)
-    };
-  }
-}
-
-/**
- * Encode proof and payment data for paymasterAndData field
+ * Encode paymaster data with ZK proof
+ * @param attestationData - Optional attestation data for cross-chain payments
  */
 export function encodePaymasterData(
-  paymasterAddress: string,
-  proofData: ProofData
-): string {
-  const { proof, publicSignals, merchant, paymentAmount, changeCommitment, changeAmount } = proofData;
+  proof: ZKProof,
+  publicSignals: string[],
+  recipient: string,
+  paymentAmount: bigint,
+  changeCommitment: string,
+  changeAmount: bigint,
+  originEid: number,
+  spentCommitment: string,
+  attestationData?: Hex  // NEW: Optional attestation data for cross-chain
+): Hex {
+  // Flatten Groth16 proof to uint256[8]
+  const MAX_UINT256 = (1n << 256n) - 1n;
+  const toUint256 = (val: string) => {
+    const bigVal = BigInt(val);
+    return bigVal > MAX_UINT256 ? bigVal & MAX_UINT256 : bigVal;
+  };
 
-  // Extract Groth16 proof elements
-  const proofA = [proof.pi_a[0], proof.pi_a[1]];
-  const proofB = [[proof.pi_b[0][1], proof.pi_b[0][0]], [proof.pi_b[1][1], proof.pi_b[1][0]]];
-  const proofC = [proof.pi_c[0], proof.pi_c[1]];
-
-  // Flatten proof for ABI encoding
   const proofFlat = [
-    ...proofA,
-    ...proofB[0],
-    ...proofB[1],
-    ...proofC
+    toUint256(proof.pi_a[0]),
+    toUint256(proof.pi_a[1]),
+    toUint256(proof.pi_b[0][1]), // Reversed order for pi_b
+    toUint256(proof.pi_b[0][0]),
+    toUint256(proof.pi_b[1][1]),
+    toUint256(proof.pi_b[1][0]),
+    toUint256(proof.pi_c[0]),
+    toUint256(proof.pi_c[1]),
   ];
 
-  // Encode: address(paymaster) + proof + publicSignals + merchant + amounts
-  const abiCoder = AbiCoder.defaultAbiCoder();
+  // Convert public signals to BigInt
+  const signals = publicSignals.map(s => BigInt(s));
 
-  const encodedProof = abiCoder.encode(
-    ['uint256[8]', 'uint256[5]', 'address', 'uint256', 'bytes32', 'uint256'],
+  // Use provided attestation data or empty bytes
+  const attestation = attestationData || ('0x' as Hex);
+
+  // Encode: (uint256[8] proof, uint256[5] publicSignals, address merchant,
+  //          uint256 paymentAmount, bytes32 changeCommitment, uint256 changeAmount,
+  //          uint32 originEid, bytes32 spentCommitment, bytes attestationData)
+  const encoded = encodeAbiParameters(
+    parseAbiParameters('uint256[8], uint256[5], address, uint256, bytes32, uint256, uint32, bytes32, bytes'),
     [
-      proofFlat,
-      publicSignals,
-      merchant,
+      proofFlat as unknown as readonly [bigint, bigint, bigint, bigint, bigint, bigint, bigint, bigint],
+      signals as readonly [bigint, bigint, bigint, bigint, bigint],
+      recipient as `0x${string}`,
       paymentAmount,
-      changeCommitment,
-      changeAmount
+      changeCommitment as `0x${string}`,
+      changeAmount,
+      originEid,
+      spentCommitment as `0x${string}`,
+      attestation,
     ]
   );
 
-  // paymasterAndData = address(20 bytes) + encodedData
-  return paymasterAddress + encodedProof.slice(2);
+  return encoded;
 }
 
 /**
- * Create a deterministic sender address (Simple Account)
- * For first-time users without an account yet
+ * Get gas prices from Pimlico bundler
  */
-export function getDeterministicSender(
-  owner: string,
-  salt: number = 0
-): string {
-  // For MVP, just use owner address
-  // In production, use CREATE2 to compute deterministic address
-  return owner;
+export async function getPimlicoGasPrice(
+  bundlerUrl: string
+): Promise<{ maxFeePerGas: bigint; maxPriorityFeePerGas: bigint }> {
+  const response = await fetch(bundlerUrl, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      jsonrpc: '2.0',
+      id: 1,
+      method: 'pimlico_getUserOperationGasPrice',
+      params: [],
+    }),
+  });
+
+  const result = await response.json();
+
+  if (result.error) {
+    // Fallback values
+    return {
+      maxFeePerGas: 1000000000n, // 1 gwei
+      maxPriorityFeePerGas: 100000000n, // 0.1 gwei
+    };
+  }
+
+  return {
+    maxFeePerGas: BigInt(result.result.fast.maxFeePerGas),
+    maxPriorityFeePerGas: BigInt(result.result.fast.maxPriorityFeePerGas),
+  };
+}
+
+/**
+ * Build UserOperation for payment
+ * @param attestationData - Optional attestation data for cross-chain payments
+ */
+export async function buildPaymentUserOp(
+  proof: ZKProof,
+  publicSignals: string[],
+  recipient: string,
+  paymentAmount: bigint,
+  changeCommitment: string,
+  changeAmount: bigint,
+  originEid: number,
+  spentCommitment: string,
+  chainConfig: ChainConfig,
+  nonce: bigint,
+  bundlerUrl: string,
+  attestationData?: Hex  // NEW: Optional attestation data for cross-chain
+): Promise<UserOperation> {
+  // Encode paymaster data (with optional attestation for cross-chain)
+  const paymasterData = encodePaymasterData(
+    proof,
+    publicSignals,
+    recipient,
+    paymentAmount,
+    changeCommitment,
+    changeAmount,
+    originEid,
+    spentCommitment,
+    attestationData  // Pass attestation data
+  );
+
+  // Get gas prices
+  const { maxFeePerGas, maxPriorityFeePerGas } = await getPimlicoGasPrice(bundlerUrl);
+
+  // Build UserOperation
+  const userOp: UserOperation = {
+    sender: chainConfig.walletAddress,
+    nonce,
+    initCode: '0x',
+    callData: '0x',
+    callGasLimit: 200000n,
+    verificationGasLimit: 2000000n, // High for ZK verification
+    preVerificationGas: 100000n,
+    maxFeePerGas,
+    maxPriorityFeePerGas,
+    paymasterAndData: (chainConfig.paymasterAddress + paymasterData.slice(2)) as Hex,
+    signature: ('0x' + '00'.repeat(65)) as Hex, // Dummy signature for AA wallet
+  };
+
+  return userOp;
+}
+
+/**
+ * Submit UserOperation to bundler
+ */
+export async function submitUserOperation(
+  userOp: UserOperation,
+  bundlerUrl: string,
+  entryPointAddress: string
+): Promise<string> {
+  const response = await fetch(bundlerUrl, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      jsonrpc: '2.0',
+      id: 1,
+      method: 'eth_sendUserOperation',
+      params: [
+        {
+          sender: userOp.sender,
+          nonce: '0x' + userOp.nonce.toString(16),
+          initCode: userOp.initCode,
+          callData: userOp.callData,
+          callGasLimit: '0x' + userOp.callGasLimit.toString(16),
+          verificationGasLimit: '0x' + userOp.verificationGasLimit.toString(16),
+          preVerificationGas: '0x' + userOp.preVerificationGas.toString(16),
+          maxFeePerGas: '0x' + userOp.maxFeePerGas.toString(16),
+          maxPriorityFeePerGas: '0x' + userOp.maxPriorityFeePerGas.toString(16),
+          paymasterAndData: userOp.paymasterAndData,
+          signature: userOp.signature,
+        },
+        entryPointAddress,
+      ],
+    }),
+  });
+
+  const result = await response.json();
+
+  if (result.error) {
+    throw new Error(result.error.message || 'Bundler submission failed');
+  }
+
+  return result.result; // userOpHash
+}
+
+/**
+ * Wait for UserOperation confirmation
+ */
+export async function waitForUserOpConfirmation(
+  userOpHash: string,
+  bundlerUrl: string,
+  maxAttempts = 30,
+  delayMs = 2000
+): Promise<{ transactionHash: string; success: boolean }> {
+  for (let i = 0; i < maxAttempts; i++) {
+    try {
+      const response = await fetch(bundlerUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          jsonrpc: '2.0',
+          id: 1,
+          method: 'eth_getUserOperationReceipt',
+          params: [userOpHash],
+        }),
+      });
+
+      const result = await response.json();
+
+      if (result.result && result.result.receipt) {
+        // Check if UserOp succeeded
+        if (result.result.success === false) {
+          throw new Error(
+            `UserOperation failed on-chain. TX: ${result.result.receipt.transactionHash}`
+          );
+        }
+
+        return {
+          transactionHash: result.result.receipt.transactionHash,
+          success: true,
+        };
+      }
+    } catch (error) {
+      if (error instanceof Error && error.message.includes('failed on-chain')) {
+        throw error;
+      }
+    }
+
+    // Wait before next attempt
+    await new Promise(resolve => setTimeout(resolve, delayMs));
+  }
+
+  throw new Error('Timeout waiting for UserOp confirmation');
 }

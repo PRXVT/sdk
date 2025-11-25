@@ -1,46 +1,59 @@
 {
-  "name": "@prxvt/sdk",
-  "version": "0.1.0",
-  "description": "Privacy-preserving X402 payment SDK using ZK proofs and ERC-4337",
+  "name": "@prxvt/privacy-sdk",
+  "version": "1.0.0",
+  "description": "Privacy-preserving SDK for x402 payments using zero-knowledge proofs. Pay for APIs privately without revealing your identity.",
   "main": "dist/index.js",
+  "module": "dist/index.js",
   "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
   "scripts": {
     "build": "tsc",
-    "test": "vitest",
-    "circuits:compile": "circom circuits/eligibility.circom --r1cs --wasm --sym -o build/ -l node_modules",
-    "circuits:setup": "node scripts/setup-circuits.js",
-    "circuits:verify": "snarkjs zkey verify build/eligibility.r1cs build/powersOfTau28_hez_final_20.ptau build/eligibility_final.zkey",
-    "contracts:build": "forge build",
-    "contracts:test": "forge test",
-    "deploy:sepolia": "forge script scripts/Deploy.s.sol:DeployScript --rpc-url $BASE_SEPOLIA_RPC --broadcast --verify",
-    "ui": "npx serve public -p 3000"
+    "dev": "tsc --watch",
+    "prepublishOnly": "npm run build"
   },
   "keywords": [
-    "x402",
     "privacy",
-    "zk-snarks",
-    "erc-4337",
-    "account-abstraction",
-    "base",
+    "x402",
+    "zero-knowledge",
+    "payments",
+    "zkp",
     "usdc"
   ],
-  "author": "",
+  "author": "prxvt",
   "license": "MIT",
+  "peerDependencies": {
+    "viem": "^2.0.0"
+  },
   "dependencies": {
-    "@account-abstraction/contracts": "^0.6.0",
-    "@coinbase/wallet-sdk": "^4.3.7",
-    "circomlibjs": "^0.1.7",
-    "ethers": "^5.8.0",
-    "poseidon-lite": "^0.3.0",
-    "snarkjs": "^0.7.4",
-    "userop": "^0.3.5",
-    "viem": "^2.21.0"
+    "graphql": "^16.12.0",
+    "graphql-request": "^7.3.4",
+    "snarkjs": "^0.7.0"
   },
   "devDependencies": {
-    "@types/node": "^22.5.0",
-    "@zk-kit/incremental-merkle-tree": "^1.1.0",
-    "circomlib": "^2.0.5",
-    "typescript": "^5.5.4",
-    "vitest": "^2.1.0"
-  }
+    "@types/node": "^20.0.0",
+    "typescript": "^5.0.0",
+    "viem": "^2.0.0"
+  },
+  "optionalDependencies": {
+    "circomlibjs": "^0.1.7"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/prxvt/privacy-sdk"
+  },
+  "bugs": {
+    "url": "https://github.com/prxvt/privacy-sdk/issues"
+  },
+  "homepage": "https://github.com/prxvt/privacy-sdk#readme"
 }

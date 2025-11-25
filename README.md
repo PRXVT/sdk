@@ -1,267 +1,470 @@
-# @prxvt/sdk - Privacy-Preserving X402 Payments
+# @prxvt/privacy-sdk
 
-Zero-knowledge privacy layer for X402 (Coinbase/Cloudflare's HTTP 402 payment protocol). Enables gasless, anonymous USDC payments on Base using ZK-SNARKs and ERC-4337 account abstraction.
+Privacy-preserving SDK for making x402 payments using zero-knowledge proofs. Pay for APIs privately without revealing your identity or transaction history.
+
+[![npm version](https://badge.fury.io/js/@prxvt%2Fprivacy-sdk.svg)](https://www.npmjs.com/package/@prxvt/privacy-sdk)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 ## Features
 
-- **Sender Anonymity**: Payments routed through paymaster, no user address on-chain
-- **Fixed Denominations**: 0.10, 0.50, 1.00, 5.00 USDC (reduces amount leakage)
-- **UTXO Model**: Deposit once, pay multiple times with change commitments
-- **Gasless**: ERC-4337 paymaster sponsors all transactions
-- **ZK Proofs**: Groth16 SNARKs prove commitment ownership without revealing secrets
-
-## Architecture
-
-```
-User Deposit → MerklePool (commitment = Poseidon(secret, nullifier, amount))
-                  ↓
-              Merkle Tree (off-chain, 2^20 capacity)
-                  ↓
-Payment: Generate ZK proof → UserOp to Bundler → EntryPoint
-                  ↓
-         ZKPaymaster verifies proof → MerklePool sponsors payment
-                  ↓
-         USDC transferred to merchant, change commitment created
-```
+- **Zero Gas Fees**: Users never pay gas (paymaster sponsors all transactions)
+- **Full Privacy**: Each payment uses a fresh burner wallet, unlinkable to previous payments
+- **x402 Compatible**: Works seamlessly with any x402-enabled API
+- **Note-Based**: UTXO model - notes are automatically updated after each payment
+- **Cross-Chain**: Deposit on one chain, spend on another (Base <-> Polygon)
+- **ZK Proofs**: All transactions validated with Groth16 zero-knowledge proofs
+- **Note Encryption**: AES-256-GCM encryption for secure note storage
 
 ## Installation
 
-### Prerequisites
-
-1. **Node.js** (v18+)
-2. **Circom** (for circuit compilation):
-   ```bash
-   curl --proto '=https' --tlsv1.2 https://sh.rustup.rs -sSf | sh
-   git clone https://github.com/iden3/circom.git
-   cd circom && cargo build --release && cargo install --path circom
-   ```
-3. **Foundry** (for contracts):
-   ```bash
-   curl -L https://foundry.paradigm.xyz | bash
-   foundryup
-   ```
-
-### Setup
-
 ```bash
-# Clone and install dependencies
-git clone <repo-url>
-cd sdk
-npm install
-
-# Install Foundry dependencies
-forge install OpenZeppelin/openzeppelin-contracts
-forge install eth-infinitism/account-abstraction
-
-# Compile circuit
-npm run circuits:compile
-
-# Download Powers of Tau (ceremony file)
-wget https://hermez.s3-eu-west-1.amazonaws.com/powersOfTau28_hez_final_20.ptau -O build/powersOfTau28_hez_final_20.ptau
-
-# Run trusted setup
-snarkjs groth16 setup build/eligibility.r1cs build/powersOfTau28_hez_final_20.ptau build/eligibility_0000.zkey
-snarkjs zkey contribute build/eligibility_0000.zkey build/eligibility_final.zkey --name="First contributor" -v
-
-# Export verifier contract
-snarkjs zkey export solidityverifier build/eligibility_final.zkey contracts/Verifier.sol
-
-# Build contracts
-forge build
+npm install @prxvt/privacy-sdk viem
 ```
 
-## Deployment (Base Sepolia)
+## Quick Start
 
-```bash
-# Set environment variables
-export PRIVATE_KEY=<your-private-key>
-export BASE_SEPOLIA_RPC=https://sepolia.base.org
-
-# Deploy contracts
-forge script scripts/Deploy.s.sol:DeployScript --rpc-url $BASE_SEPOLIA_RPC --broadcast --verify
-
-# Save output addresses to .env
-# POOL_ADDRESS=0x...
-# PAYMASTER_ADDRESS=0x...
-# USDC_ADDRESS=0x...
-```
-
-## Usage
-
-### Initialize SDK
+### 1. Initialize SDK
 
 ```typescript
-import { PX402SDK } from '@prxvt/sdk';
+import { PrivacySDK } from '@prxvt/privacy-sdk';
 
-const sdk = new PX402SDK({
-  poolAddress: '0x...', // MerklePool contract
-  paymasterAddress: '0x...', // ZKPaymaster contract
-  usdcAddress: '0x...', // USDC token (or MockUSDC on testnet)
-  rpcUrl: 'https://sepolia.base.org',
-  zkeyPath: './build/eligibility_final.zkey',
-  wasmPath: './build/eligibility_js/eligibility.wasm',
-  chainId: 84532, // Base Sepolia
+const sdk = new PrivacySDK({
+  chain: 'base', // or 'polygon'
+});
+```
+
+### 2. Deposit USDC -> Get Private Note
+
+```typescript
+// Deposit 10 USDC -> Get private note
+const note = await sdk.deposit(10, '0xYourPrivateKey');
+
+// The note is your private balance - save it securely!
+console.log('Note created:', JSON.stringify(note));
+```
+
+### 3. Make Private x402 Payments
+
+```typescript
+// Load your note
+sdk.setNote(note);
+
+// Wrap fetch with privacy
+const privateFetch = sdk.wrapFetch(fetch);
+
+// Make x402 payment - COMPLETELY PRIVATE!
+const response = await privateFetch('https://api.example.com/x402/endpoint', {
+  method: 'POST',
+  body: JSON.stringify({ message: 'Hello!' }),
 });
 
-await sdk.init();
+// Get updated note (old note is spent, this is the change!)
+const updatedNote = sdk.getUpdatedNote();
 ```
 
-### Deposit USDC
+### 4. Encrypt Notes for Storage
 
 ```typescript
-// Approve USDC first (via wallet)
-// usdc.approve(poolAddress, amount)
+import { encryptNote, decryptNote } from '@prxvt/privacy-sdk';
 
-// Deposit 1.00 USDC (1000000 = 1.00 USDC with 6 decimals)
-const { commitment, secret, nullifier } = await sdk.deposit(1000000);
+// Encrypt note with password
+const encrypted = await encryptNote(note, 'my-secret-password');
+localStorage.setItem('encrypted-note', encrypted);
 
-// IMPORTANT: Backup secret and nullifier! If lost, funds are unrecoverable.
-console.log('Secret:', secret.toString());
-console.log('Nullifier:', nullifier.toString());
-
-// Check balance
-console.log('Balance:', sdk.getBalance()); // "1.00"
+// Later: decrypt to use
+const decrypted = await decryptNote(encrypted, 'my-secret-password');
 ```
 
-### Make Payment
+## Complete Example
 
 ```typescript
-// Generate ZK proof for 0.10 USDC payment
-const merchantAddress = '0x1234...'; // X402 merchant address
-const proofData = await sdk.generateProof(100000, merchantAddress);
+import {
+  PrivacySDK,
+  encryptNote,
+  decryptNote,
+  getNoteBalance,
+  logger
+} from '@prxvt/privacy-sdk';
 
-// Submit UserOp via bundler (Stackup, Pimlico, etc.)
-const userOp = {
-  // ... standard ERC-4337 UserOp fields
-  paymasterAndData: encodePaymasterData(proofData), // Encode proof for paymaster
-};
+async function main() {
+  // Enable debug logging (optional)
+  logger.setLevel('debug');
 
-// Bundler submits to EntryPoint → Paymaster verifies → Payment sponsored
+  // 1. Setup SDK
+  const sdk = new PrivacySDK({ chain: 'base' });
+
+  // 2. Deposit USDC
+  const note = await sdk.deposit(10, '0xYourPrivateKey');
+  console.log('Deposited:', getNoteBalance(note), 'USDC');
+
+  // 3. Encrypt and save
+  const encrypted = await encryptNote(note, 'password123');
+  localStorage.setItem('note', encrypted);
+
+  // 4. Make payments
+  sdk.setNote(note);
+  const privateFetch = sdk.wrapFetch(fetch);
+
+  const response = await privateFetch('https://api.example.com/x402');
+  console.log('Payment successful!');
+
+  // 5. Save updated note
+  const updated = sdk.getUpdatedNote();
+  const newEncrypted = await encryptNote(updated, 'password123');
+  localStorage.setItem('note', newEncrypted);
+
+  console.log('Remaining:', getNoteBalance(updated), 'USDC');
+}
 ```
-
-### Backup & Restore
-
-```typescript
-// Export commitments (store securely!)
-const backup = sdk.exportCommitments();
-localStorage.setItem('px402_backup', backup);
-
-// Restore on new device
-const sdk2 = new PX402SDK(config);
-await sdk2.init();
-sdk2.importCommitments(localStorage.getItem('px402_backup'));
-
-console.log('Restored balance:', sdk2.getBalance());
-```
-
-## Contract Addresses
-
-### Base Sepolia (Testnet)
-
-| Contract | Address |
-|----------|---------|
-| EntryPoint (ERC-4337) | `0x5FF137D4b0FDCD49DcA30c7CF57E578a026d2789` |
-| MerklePool | TBD (deploy with script) |
-| ZKPaymaster | TBD (deploy with script) |
-| MockUSDC | TBD (deploy with script) |
-| Verifier | TBD (generated from circuit) |
-
-### Base Mainnet
-
-Coming soon.
 
 ## API Reference
 
-### `PX402SDK`
+### PrivacySDK
 
-#### `init(): Promise<void>`
-Initialize SDK (build Poseidon hash, create Merkle tree). **Must call before any operations.**
+The main SDK class for privacy payments.
 
-#### `deposit(denomination: number, secret?: bigint, nullifier?: bigint): Promise<{commitment, secret, nullifier}>`
-Deposit USDC to pool. `denomination` must be `100000`, `500000`, `1000000`, or `5000000` (0.10, 0.50, 1.00, 5.00 USDC).
+#### Constructor
 
-#### `generateProof(paymentAmount: number, merchant: Address): Promise<ProofData>`
-Generate ZK proof for payment. Returns proof data to submit via ERC-4337 bundler.
-
-#### `getBalance(): string`
-Get current balance (sum of unspent commitments) in USDC.
-
-#### `getCommitments(): CommitmentData[]`
-List all unspent commitments.
-
-#### `exportCommitments(): string`
-Export commitments as JSON for backup.
-
-#### `importCommitments(json: string): void`
-Import commitments from backup.
-
-## Security
-
-### Current Status: TESTNET ONLY
-
-**DO NOT USE IN PRODUCTION.** This is experimental software with the following limitations:
-
-1. **Trusted Setup**: Circuit uses single-party ceremony (insecure for production). Need multi-party MPC.
-2. **Merkle Tree**: Uses keccak256 on-chain (gas inefficient). Should use Poseidon or off-chain indexer.
-3. **No Audit**: Contracts and circuits not audited.
-4. **Secret Management**: Secrets stored in-memory. Need secure enclave/hardware wallet integration.
-
-### Best Practices
-
-- **Backup secrets**: If lost, funds are **permanently** unrecoverable.
-- **Use hardware wallet**: Don't expose private keys.
-- **Test on Sepolia first**: Verify everything works before mainnet.
-- **Limit deposits**: Start with small amounts (0.10-1.00 USDC).
-
-## Development
-
-```bash
-# Run tests
-npm test
-
-# Build SDK
-npm run build
-
-# Compile contracts
-forge build
-
-# Run contract tests
-forge test
+```typescript
+new PrivacySDK(config: PrivacySDKConfig)
 ```
 
-## Troubleshooting
+**Config Options:**
 
-### "SDK not initialized"
-Call `await sdk.init()` before any operations.
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `chain` | `'base' \| 'polygon'` | `'base'` | Blockchain to use |
+| `bundlerUrl` | `string` | prxvt proxy | Custom bundler URL |
+| `bundlerApiKey` | `string` | - | Pimlico API key (optional) |
+| `rpcUrl` | `string` | public RPC | Custom RPC URL |
+| `attestorUrl` | `string` | - | Cross-chain attestor URL |
+| `circuitWasmPath` | `string` | CDN | Path to circuit WASM |
+| `circuitZkeyPath` | `string` | CDN | Path to circuit zkey |
 
-### "Invalid denomination"
-Use only `100000`, `500000`, `1000000`, or `5000000` (0.10, 0.50, 1.00, 5.00 USDC).
+#### Methods
 
-### "Insufficient funds"
-Deposit more USDC or use smaller payment denomination.
+##### `deposit(amount: number, privateKey: string): Promise<Note>`
 
-### "Commitment not found in tree"
-Merkle tree desync. Re-import commitments or check on-chain events.
+Deposit USDC to create a private note.
 
-### Circuit compilation fails
-Ensure Circom installed: `circom --version`. Check `circomlib` in `node_modules`.
+```typescript
+const note = await sdk.deposit(50, '0xYourPrivateKey');
+```
+
+##### `depositFast(amount: number, privateKey: string): Promise<Note>`
+
+Fast deposit using ERC-3009 `transferWithAuthorization` (gasless).
+
+```typescript
+const note = await sdk.depositFast(50, '0xYourPrivateKey');
+```
+
+##### `makePayment(note: Note, recipient: string, amount: number): Promise<PaymentResult>`
+
+Make a direct payment to a recipient.
+
+```typescript
+const result = await sdk.makePayment(note, '0x742d35Cc...', 1.5);
+console.log('TX:', result.txHash);
+console.log('Change note:', result.note);
+```
+
+##### `wrapFetch(fetch: typeof fetch): typeof fetch`
+
+Wrap fetch to automatically handle x402 payments.
+
+```typescript
+const privateFetch = sdk.wrapFetch(fetch);
+const response = await privateFetch('https://api.example.com/x402');
+```
+
+##### `setNote(note: Note): void`
+
+Load a saved note into the SDK.
+
+```typescript
+sdk.setNote(savedNote);
+```
+
+##### `getUpdatedNote(): Note | undefined`
+
+Get the current note state after payments.
+
+```typescript
+const updatedNote = sdk.getUpdatedNote();
+```
+
+### Encryption Functions
+
+##### `encryptNote(note: Note, password: string): Promise<string>`
+
+Encrypt a note with AES-256-GCM.
+
+```typescript
+const encrypted = await encryptNote(note, 'my-password');
+// encrypted is a base64 string safe for storage
+```
+
+##### `decryptNote(encrypted: string, password: string): Promise<Note>`
+
+Decrypt an encrypted note.
+
+```typescript
+const note = await decryptNote(encrypted, 'my-password');
+```
+
+##### `isEncryptedNote(str: string): boolean`
+
+Check if a string is an encrypted note.
+
+```typescript
+if (isEncryptedNote(stored)) {
+  const note = await decryptNote(stored, password);
+}
+```
+
+### Helper Functions
+
+##### `getNoteBalance(note: Note): number`
+
+Get balance from a note in USDC.
+
+```typescript
+const balance = getNoteBalance(note); // e.g., 10.5
+```
+
+##### `hasEnoughBalance(note: Note, amount: number): boolean`
+
+Check if note has sufficient balance.
+
+```typescript
+if (!hasEnoughBalance(note, 5)) {
+  console.log('Insufficient balance');
+}
+```
+
+##### `formatUSDCAmount(microUsdc: number): string`
+
+Format micro USDC to display string.
+
+```typescript
+formatUSDCAmount(1500000); // "1.50"
+```
+
+##### `parseUSDCAmount(usdc: number): number`
+
+Parse USDC to micro USDC.
+
+```typescript
+parseUSDCAmount(1.5); // 1500000
+```
+
+### Cross-Chain Functions
+
+##### `isCrossChain(depositChain: string, paymentChain: string): boolean`
+
+Check if payment is cross-chain.
+
+```typescript
+isCrossChain('base', 'polygon'); // true
+isCrossChain('base', 'base');    // false
+```
+
+##### `getChainEid(chain: string): number`
+
+Get LayerZero endpoint ID for a chain.
+
+```typescript
+getChainEid('base');    // 30184
+getChainEid('polygon'); // 30109
+```
+
+### Logger
+
+##### `logger.setLevel(level: LogLevel): void`
+
+Configure logging level.
+
+```typescript
+import { logger } from '@prxvt/privacy-sdk';
+
+logger.setLevel('debug'); // 'none' | 'error' | 'warn' | 'info' | 'debug'
+```
+
+### Error Types
+
+```typescript
+import {
+  PrivacySDKError,
+  InsufficientBalanceError,
+  InvalidNoteError,
+  DecryptionError,
+  MerkleProofError,
+  ProofGenerationError,
+  BundlerError,
+  NetworkError,
+  PaymentRequiredError,
+  TransactionError,
+  NullifierSpentError,
+} from '@prxvt/privacy-sdk';
+```
+
+## Types
+
+### Note
+
+```typescript
+interface Note {
+  version: string;
+  commitments: NoteCommitment[];
+}
+
+interface NoteCommitment {
+  secret: string;      // Random secret (field element)
+  nullifier: string;   // Random nullifier (field element)
+  amount: number;      // Amount in micro USDC (6 decimals)
+  depositChain: string; // Chain where commitment was created
+}
+```
+
+### PaymentResult
+
+```typescript
+interface PaymentResult {
+  note: Note;              // Updated note with change
+  txHash: string;          // Transaction hash
+  nullifierHash: string;   // Nullifier hash (for tracking)
+  burnerAddress?: string;  // Burner wallet address
+  burnerPrivateKey?: string; // Burner private key (for x402)
+}
+```
+
+### PrivacySDKConfig
+
+```typescript
+interface PrivacySDKConfig {
+  chain?: 'base' | 'polygon';
+  bundlerUrl?: string;
+  bundlerApiKey?: string;
+  rpcUrl?: string;
+  attestorUrl?: string;
+  circuitWasmPath?: string;
+  circuitZkeyPath?: string;
+}
+```
+
+## How It Works
+
+### Privacy Payment Flow
+
+1. **Generate Burner Wallet**: SDK creates ephemeral EOA
+2. **ZK Proof Generation**: Proves you have a valid note without revealing it
+3. **Withdraw to Burner**: UserOperation withdraws USDC to burner (paymaster sponsors gas!)
+4. **Sign x402 Payment**: Burner signs EIP-3009 authorization (no gas needed!)
+5. **Make API Call**: Payment is sent to merchant
+6. **Create Change Note**: Remaining balance becomes a new note
+7. **Discard Burner**: Burner wallet is thrown away
+
+**Result**: Completely private payment, no gas fees, untraceable!
+
+### Cross-Chain Payments
+
+Deposit on Base, pay on Polygon (or vice versa):
+
+```typescript
+// Deposit on Base
+const sdk = new PrivacySDK({ chain: 'base' });
+const note = await sdk.deposit(10, privateKey);
+
+// Pay on Polygon
+const polygonSdk = new PrivacySDK({ chain: 'polygon' });
+polygonSdk.setNote(note); // Note from Base works on Polygon!
+const result = await polygonSdk.makePayment(note, recipient, 1);
+```
+
+Cross-chain payments use an attestor service that verifies the nullifier hasn't been spent on the origin chain.
+
+## Browser Usage
+
+For browser environments, load Poseidon hash and snarkjs:
+
+```html
+<script src="https://cdn.prxvt.io/poseidon-browser.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/snarkjs@0.7.0/build/snarkjs.min.js"></script>
+<script type="module">
+  import { PrivacySDK } from '@prxvt/privacy-sdk';
+
+  const sdk = new PrivacySDK({ chain: 'base' });
+  // ... use SDK
+</script>
+```
+
+## Node.js Usage
+
+For Node.js, install circomlibjs:
+
+```bash
+npm install circomlibjs snarkjs
+```
+
+```typescript
+import { PrivacySDK } from '@prxvt/privacy-sdk';
+import { buildPoseidon } from 'circomlibjs';
+import * as snarkjs from 'snarkjs';
+
+// Setup global Poseidon (required for Node.js)
+const poseidon = await buildPoseidon();
+globalThis.window = {
+  poseidonHash3: (a, b, c) => Promise.resolve(
+    poseidon.F.toString(poseidon([BigInt(a), BigInt(b), BigInt(c)]))
+  ),
+  poseidonHash2: (a, b) => Promise.resolve(
+    poseidon.F.toString(poseidon([BigInt(a), BigInt(b)]))
+  ),
+  poseidonHash: (a) => Promise.resolve(
+    poseidon.F.toString(poseidon([BigInt(a)]))
+  ),
+  snarkjs,
+};
+
+const sdk = new PrivacySDK({ chain: 'base' });
+```
+
+## Important Notes
+
+### Note Management
+
+- **Notes are spent after each payment**: You CANNOT reuse the same note
+- **Always save the updated note**: After each payment, get and save the new note
+- **UTXO model**: Each payment consumes the old commitment and creates a new change commitment
+
+### Privacy Guarantees
+
+- **Unlinkable payments**: Each payment uses a fresh burner wallet
+- **No transaction history**: Payments cannot be linked together
+- **Zero-knowledge proofs**: Your identity and note are never revealed
+- **Cross-chain privacy**: Deposit and withdraw on different chains
+
+### Security
+
+- **Never share your note data**: Notes contain secrets that prove ownership
+- **Use note encryption**: Always encrypt notes before storage
+- **HTTPS only**: Always use HTTPS for API calls
+- **Trusted RPCs**: Use trusted RPC providers
+
+## Supported Chains
+
+| Chain | Network | USDC Contract | LayerZero EID |
+|-------|---------|---------------|---------------|
+| Base | Mainnet | `0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913` | 30184 |
+| Polygon | Mainnet | `0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359` | 30109 |
 
 ## License
 
 MIT
 
-## Contributing
+## Links
 
-Issues and PRs welcome! Please test thoroughly on Sepolia.
-
-## Acknowledgments
-
-- **Coinbase/Cloudflare** - X402 protocol
-- **Ethereum Foundation** - ERC-4337 account abstraction
-- **iden3** - Circom, snarkjs, circomlib
-- **Pimlico/Stackup** - ERC-4337 bundlers
-- **Tornado Cash** - Merkle tree + nullifier design inspiration
-
----
-
-**Built with**: Circom, Groth16, Poseidon, ERC-4337, Base L2, USDC
+- **GitHub**: [github.com/prxvt/privacy-sdk](https://github.com/prxvt/privacy-sdk)
+- **npm**: [npmjs.com/package/@prxvt/privacy-sdk](https://www.npmjs.com/package/@prxvt/privacy-sdk)
+- **Issues**: [Report bugs](https://github.com/prxvt/privacy-sdk/issues)
